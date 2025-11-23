@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   BookOpen, 
   MessageSquare, 
@@ -16,31 +16,282 @@ import {
   Cpu, 
   HardDrive, 
   Activity, 
-  BarChart3 
+  BarChart3,
+  Play,
+  Square,
+  SkipForward,
+  Volume2,
+  Settings
 } from 'lucide-react';
+
+// --- Tour Data Configuration ---
+const TOUR_STEPS = [
+  { 
+    id: 'tour-header', 
+    tab: 'overview', 
+    title: 'Welcome', 
+    text: 'Welcome to the RAG Project Dashboard. This interactive dashboard showcases our Capstone Project: a NotebookLM-style Retrieval Augmented Generation system.' 
+  },
+  { 
+    id: 'tour-objective', 
+    tab: 'overview', 
+    title: 'Project Objective', 
+    text: 'Our main objective was to build an intelligent chatbot capable of answering domain-specific questions by understanding your custom documents, utilizing advanced vector databases and LLMs.' 
+  },
+  { 
+    id: 'tour-stats', 
+    tab: 'overview', 
+    title: 'Key Statistics', 
+    text: 'Here are the key metrics. We achieved a query response time of under 2 seconds and built 8 core learning features with just around 1500 lines of efficient Python code.' 
+  },
+  { 
+    id: 'tour-problem', 
+    tab: 'problem', 
+    title: 'The Challenge', 
+    text: 'Manual document processing is slow and error-prone. We solved this by automating the extraction of insights and providing instant, grounded answers through AI.' 
+  },
+  { 
+    id: 'tour-architecture', 
+    tab: 'architecture', 
+    title: 'System Architecture', 
+    text: 'This is our pipeline. Documents are extracted using PyMuPDF, chunked into smaller pieces, vectorized using TF-IDF, and then processed by the GROQ LLM to generate answers.' 
+  },
+  { 
+    id: 'tour-features', 
+    tab: 'features', 
+    title: 'Core Features', 
+    text: 'Beyond simple chat, our system generates summaries, mind maps, quizzes, and even audio flashcards to enhance the learning experience.' 
+  },
+  { 
+    id: 'tour-tech', 
+    tab: 'tech', 
+    title: 'Technology Stack', 
+    text: 'We utilized a robust stack featuring Streamlit for the UI, GROQ for fast inference, and Scikit-learn for efficient, CPU-friendly vectorization.' 
+  },
+  { 
+    id: 'tour-metrics', 
+    tab: 'metrics', 
+    title: 'Performance', 
+    text: 'Finally, our performance metrics show the system is highly optimized, with retrieval speeds under 100 milliseconds and low memory footprint.' 
+  }
+];
+
+// --- Visual Components ---
+
+const TourActiveLabel = ({ activeId }: { activeId: string }) => {
+  const step = TOUR_STEPS.find(s => s.id === activeId);
+  const label = step ? step.title : "ACTIVE SECTION";
+
+  return (
+    <div className="absolute -top-14 left-1/2 transform -translate-x-1/2 z-[60] w-max max-w-[90vw] pointer-events-none">
+       <div className="animate-bounce flex flex-col items-center">
+         <div className="bg-gray-900 text-white text-sm md:text-base font-bold px-5 py-2.5 rounded-full shadow-2xl border-2 border-yellow-400 flex items-center gap-2.5">
+          <Volume2 className="w-4 h-4 text-yellow-400 animate-pulse fill-current" />
+          <span className="uppercase tracking-wide">{label}</span>
+        </div>
+        <div className="w-0 h-0 border-l-[8px] border-l-transparent border-t-[8px] border-t-gray-900 border-r-[8px] border-r-transparent mt-[-1px]"></div>
+      </div>
+    </div>
+  );
+};
+
+interface SimpleTooltipProps { 
+  content: string; 
+  children: React.ReactNode; 
+  side?: 'top' | 'bottom';
+  className?: string;
+}
+
+const SimpleTooltip: React.FC<SimpleTooltipProps> = ({ 
+  content, 
+  children, 
+  side = 'top',
+  className = ""
+}) => {
+  const [show, setShow] = useState(false);
+  
+  return (
+    <div 
+      className={`relative ${className}`}
+      onMouseEnter={() => setShow(true)}
+      onMouseLeave={() => setShow(false)}
+    >
+      {children}
+      <div 
+        className={`absolute ${side === 'top' ? 'bottom-full mb-2' : 'top-full mt-2'} left-1/2 transform -translate-x-1/2 px-3 py-1.5 bg-gray-900 text-white text-xs font-medium rounded-lg opacity-0 transition-opacity duration-200 pointer-events-none z-[70] shadow-xl w-max max-w-[200px] text-center ${show ? 'opacity-100' : ''}`}
+      >
+        {content}
+        {side === 'top' ? (
+           <div className="absolute top-full left-1/2 transform -translate-x-1/2 border-4 border-transparent border-t-gray-900"></div>
+        ) : (
+           <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 border-4 border-transparent border-b-gray-900"></div>
+        )}
+      </div>
+    </div>
+  );
+};
 
 const RAGProjectDashboard = () => {
   const [activeTab, setActiveTab] = useState('overview');
   const [isVisible, setIsVisible] = useState(false);
+  
+  // Tour State
+  const [isTourActive, setIsTourActive] = useState(false);
+  const [currentStepIndex, setCurrentStepIndex] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  
+  // Audio Settings State
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [selectedVoiceName, setSelectedVoiceName] = useState<string>('');
+  const [speechRate, setSpeechRate] = useState<number>(1);
+  const [showSettings, setShowSettings] = useState<boolean>(false);
+  
+  // Audio Ref
+  const speechRef = useRef<SpeechSynthesisUtterance | null>(null);
 
   useEffect(() => {
     setIsVisible(true);
+    // Cleanup audio on unmount
+    return () => {
+      window.speechSynthesis.cancel();
+    };
   }, []);
 
+  // Load available voices
+  useEffect(() => {
+    const updateVoices = () => {
+      const available = window.speechSynthesis.getVoices();
+      
+      // Sort voices: English first, then alphabetical
+      const sortedVoices = [...available].sort((a, b) => {
+        const aIsEnglish = a.lang.startsWith('en');
+        const bIsEnglish = b.lang.startsWith('en');
+        
+        if (aIsEnglish && !bIsEnglish) return -1;
+        if (!aIsEnglish && bIsEnglish) return 1;
+        return a.name.localeCompare(b.name);
+      });
+      
+      setVoices(sortedVoices);
+
+      if (sortedVoices.length > 0 && !selectedVoiceName) {
+        // Try to find a good default (Google US or any English)
+        const defaultVoice = sortedVoices.find(v => v.name === 'Google US English') 
+                          || sortedVoices.find(v => v.lang === 'en-US')
+                          || sortedVoices.find(v => v.lang.startsWith('en'))
+                          || sortedVoices[0];
+        if (defaultVoice) setSelectedVoiceName(defaultVoice.name);
+      }
+    };
+    
+    updateVoices();
+    window.speechSynthesis.onvoiceschanged = updateVoices;
+  }, [selectedVoiceName]);
+
+  // Handle Tour Navigation and Audio
+  useEffect(() => {
+    if (isTourActive) {
+      const step = TOUR_STEPS[currentStepIndex];
+      
+      // Switch tab if needed
+      if (activeTab !== step.tab) {
+        setActiveTab(step.tab);
+      }
+
+      // Scroll to element
+      setTimeout(() => {
+        const element = document.getElementById(step.id);
+        if (element) {
+          element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 300); // Slight delay to allow tab switch render
+
+      // Speak (triggered also when settings change)
+      if (isPlaying) {
+        speak(step.text);
+      }
+    } else {
+      window.speechSynthesis.cancel();
+    }
+  }, [currentStepIndex, isTourActive, isPlaying, activeTab, speechRate, selectedVoiceName]);
+
+  const speak = (text: string) => {
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    
+    // Select Voice
+    if (selectedVoiceName) {
+      const voice = voices.find(v => v.name === selectedVoiceName);
+      if (voice) utterance.voice = voice;
+    }
+    
+    utterance.rate = speechRate;
+    utterance.pitch = 1;
+    
+    utterance.onend = () => {
+      // Optional: Auto-advance could go here
+    };
+
+    speechRef.current = utterance;
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const startTour = () => {
+    setIsTourActive(true);
+    setCurrentStepIndex(0);
+    setIsPlaying(true);
+    // Needed to ensure voices are loaded if not already
+    if (voices.length === 0) {
+      const vs = window.speechSynthesis.getVoices();
+      setVoices(vs);
+    }
+  };
+
+  const stopTour = () => {
+    setIsTourActive(false);
+    setIsPlaying(false);
+    setShowSettings(false);
+    window.speechSynthesis.cancel();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const nextStep = () => {
+    if (currentStepIndex < TOUR_STEPS.length - 1) {
+      setCurrentStepIndex(prev => prev + 1);
+      setIsPlaying(true); // Ensure it keeps speaking
+    } else {
+      stopTour();
+    }
+  };
+
+  const currentStep = TOUR_STEPS[currentStepIndex];
+
+  // Helper for sub-components to determine highlight style
+  const activeTourId = isTourActive ? currentStep.id : null;
+
   const tabs = [
-    { id: 'overview', label: 'Project Overview', icon: Target },
-    { id: 'problem', label: 'Problem & Solution', icon: AlertCircle },
-    { id: 'architecture', label: 'Architecture', icon: Database },
-    { id: 'features', label: 'Features', icon: Zap },
-    { id: 'tech', label: 'Tech Stack', icon: Code },
-    { id: 'metrics', label: 'Metrics', icon: TrendingUp }
+    { id: 'overview', label: 'Project Overview', icon: Target, desc: 'View summary, key stats, and objectives' },
+    { id: 'problem', label: 'Problem & Solution', icon: AlertCircle, desc: 'Understand the business challenge and our solution' },
+    { id: 'architecture', label: 'Architecture', icon: Database, desc: 'Explore the technical system design and pipeline' },
+    { id: 'features', label: 'Features', icon: Zap, desc: 'Discover the core capabilities of the system' },
+    { id: 'tech', label: 'Tech Stack', icon: Code, desc: 'See the languages, frameworks, and tools used' },
+    { id: 'metrics', label: 'Metrics', icon: TrendingUp, desc: 'Analyze performance benchmarks and code stats' }
   ];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 p-8">
-      <div className="max-w-7xl mx-auto">
-        {/* Animated Header */}
-        <div className={`bg-gradient-to-r from-blue-600 to-purple-600 rounded-2xl shadow-2xl p-8 mb-8 border-t-4 border-yellow-400 transform transition-all duration-1000 ${isVisible ? 'translate-y-0 opacity-100' : '-translate-y-10 opacity-0'}`}>
+    <div className={`min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 p-8 ${isTourActive ? 'overflow-hidden h-screen' : ''}`}>
+      {/* Tour Overlay Backdrop */}
+      {isTourActive && (
+        <div className="fixed inset-0 bg-black/80 z-40 transition-opacity duration-500 backdrop-blur-sm pointer-events-none" />
+      )}
+
+      <div className="max-w-7xl mx-auto relative z-30">
+        {/* Header */}
+        <div 
+          id="tour-header"
+          className={`bg-gradient-to-r from-blue-600 to-purple-600 rounded-2xl shadow-2xl p-8 mb-8 border-t-4 border-yellow-400 transform transition-all duration-1000 ${isVisible ? 'translate-y-0 opacity-100' : '-translate-y-10 opacity-0'} ${activeTourId === 'tour-header' ? 'relative z-50 ring-4 ring-yellow-400 scale-[1.02]' : ''}`}
+        >
+          {activeTourId === 'tour-header' && <TourActiveLabel activeId="tour-header" />}
           <div className="flex flex-col md:flex-row items-center justify-between gap-6 md:gap-0">
             <div>
               <h1 className="text-3xl md:text-5xl font-bold text-white mb-2 animate-pulse text-center md:text-left">
@@ -49,70 +300,196 @@ const RAGProjectDashboard = () => {
               <p className="text-xl md:text-2xl text-blue-100 text-center md:text-left">
                 AI-Powered Business Intelligence Platform
               </p>
-              <div className="flex gap-4 mt-4 justify-center md:justify-start">
-                <span className="px-4 py-2 bg-white text-blue-700 rounded-full text-sm font-bold shadow-lg hover:scale-105 transition-transform">
-                  Capstone Project
-                </span>
-                <span className="px-4 py-2 bg-yellow-400 text-gray-900 rounded-full text-sm font-bold shadow-lg hover:scale-105 transition-transform">
-                  Data Science with GenAI
-                </span>
+              <div className="flex flex-wrap gap-4 mt-4 justify-center md:justify-start">
+                <SimpleTooltip content="Academic milestone identification">
+                  <span className="px-4 py-2 bg-white text-blue-700 rounded-full text-sm font-bold shadow-lg cursor-default">
+                    Capstone Project
+                  </span>
+                </SimpleTooltip>
+                <SimpleTooltip content="Specialization track">
+                  <span className="px-4 py-2 bg-yellow-400 text-gray-900 rounded-full text-sm font-bold shadow-lg cursor-default">
+                    Data Science with GenAI
+                  </span>
+                </SimpleTooltip>
+                {!isTourActive && (
+                  <SimpleTooltip content="Begin an interactive voice-guided tour of the dashboard">
+                    <button 
+                      onClick={startTour}
+                      className="flex items-center gap-2 px-4 py-2 bg-green-500 hover:bg-green-400 text-white rounded-full text-sm font-bold shadow-lg transition-colors cursor-pointer"
+                    >
+                      <Volume2 className="w-4 h-4" />
+                      Start Audio Tour
+                    </button>
+                  </SimpleTooltip>
+                )}
               </div>
             </div>
             <div className="text-right flex flex-col items-center md:items-end">
               <div className="text-sm text-blue-200 mb-1">Team Size</div>
-              <div className="text-4xl font-bold text-white flex items-center gap-2 animate-bounce">
-                <Users className="w-10 h-10" />2 Students
-              </div>
+              <SimpleTooltip content="Total project team members">
+                <div className="text-4xl font-bold text-white flex items-center gap-2 animate-bounce cursor-default">
+                  <Users className="w-10 h-10" />2 Students
+                </div>
+              </SimpleTooltip>
               <div className="text-sm text-blue-200 mt-2">November 2025</div>
             </div>
           </div>
         </div>
 
-        {/* Tab Navigation with Hover Effects */}
+        {/* Tab Navigation */}
         <div className="bg-white rounded-xl shadow-2xl mb-8 p-2">
           <div className="flex gap-2 overflow-x-auto pb-2 md:pb-0">
             {tabs.map(tab => {
               const Icon = tab.icon;
               return (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`flex items-center gap-2 px-6 py-3 rounded-lg font-medium transition-all whitespace-nowrap transform hover:scale-105 ${
-                    activeTab === tab.id
-                      ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-xl scale-105'
-                      : 'text-gray-600 hover:bg-gradient-to-r hover:from-blue-50 hover:to-purple-50'
-                  }`}
-                >
-                  <Icon className="w-5 h-5" />
-                  {tab.label}
-                </button>
+                <SimpleTooltip key={tab.id} content={tab.desc}>
+                  <button
+                    onClick={() => !isTourActive && setActiveTab(tab.id)}
+                    disabled={isTourActive}
+                    className={`flex items-center gap-2 px-6 py-3 rounded-lg font-medium transition-all whitespace-nowrap transform ${
+                      activeTab === tab.id
+                        ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-xl scale-105'
+                        : 'text-gray-600 hover:bg-gradient-to-r hover:from-blue-50 hover:to-purple-50'
+                    } ${isTourActive ? 'cursor-not-allowed opacity-80' : 'hover:scale-105'}`}
+                  >
+                    <Icon className="w-5 h-5" />
+                    {tab.label}
+                  </button>
+                </SimpleTooltip>
               );
             })}
           </div>
         </div>
 
-        {/* Content Area with Fade In */}
+        {/* Content Area */}
         <div className={`bg-white rounded-2xl shadow-2xl p-8 transition-opacity duration-500 ${isVisible ? 'opacity-100' : 'opacity-0'}`}>
-          {activeTab === 'overview' && <OverviewTab />}
-          {activeTab === 'problem' && <ProblemTab />}
-          {activeTab === 'architecture' && <ArchitectureTab />}
-          {activeTab === 'features' && <FeaturesTab />}
-          {activeTab === 'tech' && <TechStackTab />}
-          {activeTab === 'metrics' && <MetricsTab />}
+          {activeTab === 'overview' && <OverviewTab activeTourId={activeTourId} />}
+          {activeTab === 'problem' && <ProblemTab activeTourId={activeTourId} />}
+          {activeTab === 'architecture' && <ArchitectureTab activeTourId={activeTourId} />}
+          {activeTab === 'features' && <FeaturesTab activeTourId={activeTourId} />}
+          {activeTab === 'tech' && <TechStackTab activeTourId={activeTourId} />}
+          {activeTab === 'metrics' && <MetricsTab activeTourId={activeTourId} />}
         </div>
       </div>
+
+      {/* Floating Tour Controls - Subtitle Style */}
+      {isTourActive && (
+        <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-[100] w-[95%] max-w-4xl animate-in slide-in-from-bottom-10 fade-in duration-500">
+          
+          {/* Settings Panel - Slides up */}
+          {showSettings && (
+            <div className="bg-slate-800/95 backdrop-blur-xl rounded-t-2xl shadow-2xl border-x border-t border-white/10 p-4 mb-[-1px] animate-in slide-in-from-bottom-2 fade-in">
+              <div className="grid md:grid-cols-2 gap-4">
+                <SimpleTooltip content="Choose your preferred AI narrator" className="w-full">
+                  <div>
+                    <label className="text-xs font-bold text-gray-400 uppercase mb-2 block">Voice</label>
+                    <select 
+                      value={selectedVoiceName}
+                      onChange={(e) => setSelectedVoiceName(e.target.value)}
+                      className="w-full bg-slate-700 text-white rounded-lg px-3 py-2 text-sm border border-slate-600 focus:outline-none focus:border-blue-500 cursor-pointer"
+                    >
+                      {voices.map(v => (
+                        <option key={v.name} value={v.name}>
+                          {v.name} ({v.lang})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </SimpleTooltip>
+                
+                <SimpleTooltip content="Adjust narration playback speed" className="w-full">
+                  <div>
+                    <label className="text-xs font-bold text-gray-400 uppercase mb-2 block flex justify-between">
+                      <span>Speed</span>
+                      <span>{speechRate}x</span>
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-gray-400">0.5x</span>
+                      <input 
+                        type="range" 
+                        min="0.5" 
+                        max="2" 
+                        step="0.25" 
+                        value={speechRate}
+                        onChange={(e) => setSpeechRate(parseFloat(e.target.value))}
+                        className="flex-1 accent-blue-500 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer"
+                      />
+                      <span className="text-xs text-gray-400">2x</span>
+                    </div>
+                  </div>
+                </SimpleTooltip>
+              </div>
+            </div>
+          )}
+
+          {/* Main Control Bar */}
+          <div className={`bg-slate-900/95 backdrop-blur-xl shadow-2xl border border-white/10 p-6 flex flex-col md:flex-row items-center gap-6 transition-all duration-300 ${showSettings ? 'rounded-b-2xl rounded-t-none border-t-0' : 'rounded-2xl'}`}>
+            
+            <div className="flex-1 text-center md:text-left min-w-0">
+               <div className="flex items-center justify-center md:justify-start gap-2 mb-2">
+                  <span className="flex h-2 w-2 rounded-full bg-red-500 animate-pulse"></span>
+                  <p className="text-xs font-bold text-blue-400 uppercase tracking-widest">Live Audio Guide</p>
+               </div>
+               <h3 className="hidden md:block text-xl font-bold text-white mb-2">{currentStep.title}</h3>
+               <p className="text-lg md:text-xl text-gray-200 font-medium leading-relaxed">
+                 "{currentStep.text}"
+               </p>
+            </div>
+            
+            <div className="flex items-center gap-3 flex-shrink-0">
+               <SimpleTooltip content="Configure voice and speed settings">
+                 <button 
+                  onClick={() => setShowSettings(!showSettings)}
+                  className={`p-3 rounded-lg transition-colors ${showSettings ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-white/10'}`}
+                >
+                  <Settings className="w-5 h-5" />
+                </button>
+               </SimpleTooltip>
+
+               <SimpleTooltip content="Stop the audio tour">
+                 <button 
+                  onClick={stopTour}
+                  className="px-4 py-2 text-gray-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors text-sm font-medium"
+                >
+                  End Tour
+                </button>
+               </SimpleTooltip>
+               
+               <SimpleTooltip content="Skip to the next section">
+                <button 
+                  onClick={nextStep}
+                  className="px-8 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-full font-bold shadow-lg shadow-blue-500/30 flex items-center gap-2 transition-all transform hover:scale-105 active:scale-95"
+                >
+                  Next <SkipForward className="w-4 h-4 fill-current" />
+                </button>
+               </SimpleTooltip>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
-const OverviewTab = () => (
+// Helper for highlighting styles
+const getHighlightClass = (id: string, activeId: string | null) => {
+  return activeId === id 
+    ? "relative z-50 ring-4 ring-yellow-400 scale-[1.02] bg-white transition-all duration-500 shadow-2xl" 
+    : "";
+};
+
+const OverviewTab = ({ activeTourId }: { activeTourId: string | null }) => (
   <div className="space-y-6">
     <h2 className="text-4xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent mb-6">
       Project Overview
     </h2>
     
     {/* Project Objective */}
-    <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-6 border-l-4 border-blue-600 hover:shadow-xl transition-shadow duration-300 transform hover:-translate-y-1">
+    <div 
+      id="tour-objective"
+      className={`bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-6 border-l-4 border-blue-600 hover:shadow-xl transition-all duration-300 transform ${getHighlightClass('tour-objective', activeTourId)}`}
+    >
+      {activeTourId === 'tour-objective' && <TourActiveLabel activeId="tour-objective" />}
       <h3 className="text-2xl font-bold text-gray-900 mb-4 flex items-center gap-3">
         <Target className="w-7 h-7 text-blue-600 animate-pulse" />
         Project Objective
@@ -138,23 +515,39 @@ const OverviewTab = () => (
     </div>
 
     {/* Key Stats Grid with Animated Numbers */}
-    <div className="grid md:grid-cols-4 gap-6 mt-8">
-      <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-6 text-white hover:scale-105 transform transition-all duration-300 shadow-xl hover:shadow-2xl">
-        <div className="text-5xl font-bold mb-2">8</div>
-        <div className="text-blue-100">Core Features</div>
-      </div>
-      <div className="bg-gradient-to-br from-green-500 to-green-600 rounded-xl p-6 text-white hover:scale-105 transform transition-all duration-300 shadow-xl hover:shadow-2xl">
-        <div className="text-5xl font-bold mb-2">3</div>
-        <div className="text-green-100">File Formats</div>
-      </div>
-      <div className="bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl p-6 text-white hover:scale-105 transform transition-all duration-300 shadow-xl hover:shadow-2xl">
-        <div className="text-5xl font-bold mb-2">1-2s</div>
-        <div className="text-purple-100">Response Time</div>
-      </div>
-      <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl p-6 text-white hover:scale-105 transform transition-all duration-300 shadow-xl hover:shadow-2xl">
-        <div className="text-5xl font-bold mb-2">~1500</div>
-        <div className="text-orange-100">Lines of Code</div>
-      </div>
+    <div 
+      id="tour-stats"
+      className={`grid md:grid-cols-4 gap-6 mt-8 p-2 rounded-xl ${getHighlightClass('tour-stats', activeTourId)}`}
+    >
+      {activeTourId === 'tour-stats' && <TourActiveLabel activeId="tour-stats" />}
+      
+      <SimpleTooltip content="Number of major features implemented">
+        <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-6 text-white hover:scale-105 transform transition-all duration-300 shadow-xl hover:shadow-2xl">
+          <div className="text-5xl font-bold mb-2">8</div>
+          <div className="text-blue-100">Core Features</div>
+        </div>
+      </SimpleTooltip>
+
+      <SimpleTooltip content="Supported document input types">
+        <div className="bg-gradient-to-br from-green-500 to-green-600 rounded-xl p-6 text-white hover:scale-105 transform transition-all duration-300 shadow-xl hover:shadow-2xl">
+          <div className="text-5xl font-bold mb-2">3</div>
+          <div className="text-green-100">File Formats</div>
+        </div>
+      </SimpleTooltip>
+
+      <SimpleTooltip content="Average time to process query">
+        <div className="bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl p-6 text-white hover:scale-105 transform transition-all duration-300 shadow-xl hover:shadow-2xl">
+          <div className="text-5xl font-bold mb-2">1-2s</div>
+          <div className="text-purple-100">Response Time</div>
+        </div>
+      </SimpleTooltip>
+
+      <SimpleTooltip content="Total project codebase size">
+        <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl p-6 text-white hover:scale-105 transform transition-all duration-300 shadow-xl hover:shadow-2xl">
+          <div className="text-5xl font-bold mb-2">~1500</div>
+          <div className="text-orange-100">Lines of Code</div>
+        </div>
+      </SimpleTooltip>
     </div>
 
     {/* What We Built */}
@@ -167,29 +560,35 @@ const OverviewTab = () => (
           { icon: Brain, title: 'Learning Assistant', desc: 'Quizzes, flashcards, mind maps', color: 'purple' },
           { icon: Zap, title: 'Smart Summarizer', desc: 'Auto-generates insights & summaries', color: 'orange' }
         ].map((item, idx) => (
-          <div key={idx} className="flex items-start gap-4 p-4 bg-gray-50 rounded-lg border-2 border-gray-200 hover:border-blue-400 transition-all duration-300 transform hover:-translate-y-2 hover:shadow-xl">
-            <div className="bg-blue-500 p-3 rounded-lg hover:rotate-12 transition-transform duration-300">
-              <item.icon className="w-6 h-6 text-white" />
+          <SimpleTooltip key={idx} content={`Feature: ${item.desc}`}>
+            <div className="flex items-start gap-4 p-4 bg-gray-50 rounded-lg border-2 border-gray-200 hover:border-blue-400 transition-all duration-300 transform hover:-translate-y-2 hover:shadow-xl w-full">
+              <div className="bg-blue-500 p-3 rounded-lg hover:rotate-12 transition-transform duration-300">
+                <item.icon className="w-6 h-6 text-white" />
+              </div>
+              <div>
+                <h4 className="font-bold text-gray-900">{item.title}</h4>
+                <p className="text-gray-600 text-sm">{item.desc}</p>
+              </div>
             </div>
-            <div>
-              <h4 className="font-bold text-gray-900">{item.title}</h4>
-              <p className="text-gray-600 text-sm">{item.desc}</p>
-            </div>
-          </div>
+          </SimpleTooltip>
         ))}
       </div>
     </div>
   </div>
 );
 
-const ProblemTab = () => (
+const ProblemTab = ({ activeTourId }: { activeTourId: string | null }) => (
   <div className="space-y-8">
     <h2 className="text-4xl font-bold bg-gradient-to-r from-red-600 to-orange-600 bg-clip-text text-transparent mb-6">
       Problem Statement & Solution
     </h2>
     
     {/* Problem Statement */}
-    <div>
+    <div 
+      id="tour-problem" 
+      className={`p-4 rounded-xl ${getHighlightClass('tour-problem', activeTourId)}`}
+    >
+      {activeTourId === 'tour-problem' && <TourActiveLabel activeId="tour-problem" />}
       <h3 className="text-3xl font-bold text-red-600 mb-4 flex items-center gap-3">
         <AlertCircle className="w-8 h-8 animate-pulse" />
         The Challenge
@@ -259,14 +658,18 @@ const ProblemTab = () => (
   </div>
 );
 
-const ArchitectureTab = () => (
+const ArchitectureTab = ({ activeTourId }: { activeTourId: string | null }) => (
   <div className="space-y-6">
     <h2 className="text-4xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent mb-6">
       System Architecture
     </h2>
     
     {/* Architecture Flow with Animations */}
-    <div className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl p-8 border-2 border-gray-300 shadow-xl">
+    <div 
+      id="tour-architecture"
+      className={`bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl p-8 border-2 border-gray-300 shadow-xl ${getHighlightClass('tour-architecture', activeTourId)}`}
+    >
+      {activeTourId === 'tour-architecture' && <TourActiveLabel activeId="tour-architecture" />}
       <div className="space-y-6">
         <div className="text-center">
           <div className="inline-block bg-gradient-to-r from-blue-600 to-purple-600 text-white px-8 py-4 rounded-lg font-bold text-xl shadow-lg">
@@ -399,7 +802,7 @@ const ArchitectureTab = () => (
   </div>
 );
 
-const FeaturesTab = () => {
+const FeaturesTab = ({ activeTourId }: { activeTourId: string | null }) => {
   const features = [
     { icon: '📋', title: 'Document Summary', desc: 'Auto-generates 2-3 paragraph summaries in under 2 seconds', color: 'bg-blue-50 border-blue-500' },
     { icon: '💡', title: 'Key Insights', desc: 'Extracts 5 major insights ranked by importance', color: 'bg-green-50 border-green-500' },
@@ -417,17 +820,23 @@ const FeaturesTab = () => {
         Core Features
       </h2>
       
-      <div className="grid md:grid-cols-2 gap-6">
+      <div 
+        id="tour-features"
+        className={`grid md:grid-cols-2 gap-6 p-4 rounded-xl ${getHighlightClass('tour-features', activeTourId)}`}
+      >
+        {activeTourId === 'tour-features' && <TourActiveLabel activeId="tour-features" />}
         {features.map((feature, idx) => (
-          <div key={idx} className={`${feature.color} rounded-xl p-6 border-l-4 hover:shadow-2xl transition-all duration-300 transform hover:-translate-y-2 hover:scale-105`}>
-            <div className="flex items-start gap-4">
-              <div className="text-5xl">{feature.icon}</div>
-              <div className="flex-1">
-                <h3 className="text-xl font-bold text-gray-900 mb-2">{feature.title}</h3>
-                <p className="text-gray-700">{feature.desc}</p>
+          <SimpleTooltip key={idx} content={feature.desc}>
+            <div className={`${feature.color} rounded-xl p-6 border-l-4 hover:shadow-2xl transition-all duration-300 transform hover:-translate-y-2 hover:scale-105 w-full`}>
+              <div className="flex items-start gap-4">
+                <div className="text-5xl">{feature.icon}</div>
+                <div className="flex-1">
+                  <h3 className="text-xl font-bold text-gray-900 mb-2">{feature.title}</h3>
+                  <p className="text-gray-700">{feature.desc}</p>
+                </div>
               </div>
             </div>
-          </div>
+          </SimpleTooltip>
         ))}
       </div>
 
@@ -485,13 +894,17 @@ const FeaturesTab = () => {
   );
 };
 
-const TechStackTab = () => (
+const TechStackTab = ({ activeTourId }: { activeTourId: string | null }) => (
   <div className="space-y-6">
     <h2 className="text-4xl font-bold bg-gradient-to-r from-indigo-600 to-blue-600 bg-clip-text text-transparent mb-6">
       Technology Stack
     </h2>
     
-    <div className="grid md:grid-cols-2 gap-6">
+    <div 
+      id="tour-tech"
+      className={`grid md:grid-cols-2 gap-6 p-4 rounded-xl ${getHighlightClass('tour-tech', activeTourId)}`}
+    >
+      {activeTourId === 'tour-tech' && <TourActiveLabel activeId="tour-tech" />}
       {/* Languages & Frameworks */}
       <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-6 border-2 border-blue-300 hover:shadow-2xl transition-all duration-300">
         <h3 className="text-xl font-bold text-blue-900 mb-4">Languages & Frameworks</h3>
@@ -606,7 +1019,7 @@ const TechStackTab = () => (
   </div>
 );
 
-const MetricsTab = () => {
+const MetricsTab = ({ activeTourId }: { activeTourId: string | null }) => {
   const [hoveredBar, setHoveredBar] = useState<number | null>(null);
 
   return (
@@ -617,28 +1030,40 @@ const MetricsTab = () => {
       
       {/* Performance Benchmarks with Animated Cards */}
       <div className="grid md:grid-cols-3 gap-6">
-        <div className="bg-gradient-to-br from-green-500 to-green-600 rounded-xl p-6 text-white shadow-2xl hover:scale-105 transition-all duration-300">
-          <Clock className="w-12 h-12 mb-4 animate-pulse" />
-          <div className="text-6xl font-bold mb-2">1-2s</div>
-          <div className="text-green-100 text-lg">Query Response Time</div>
-          <div className="mt-4 text-sm text-green-100">Including LLM inference</div>
-        </div>
-        <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-6 text-white shadow-2xl hover:scale-105 transition-all duration-300">
-          <Cpu className="w-12 h-12 mb-4 animate-pulse" />
-          <div className="text-6xl font-bold mb-2">&lt;5s</div>
-          <div className="text-blue-100 text-lg">Document Processing</div>
-          <div className="mt-4 text-sm text-blue-100">Full pipeline end-to-end</div>
-        </div>
-        <div className="bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl p-6 text-white shadow-2xl hover:scale-105 transition-all duration-300">
-          <Activity className="w-12 h-12 mb-4 animate-pulse" />
-          <div className="text-6xl font-bold mb-2">100ms</div>
-          <div className="text-purple-100 text-lg">Retrieval Speed</div>
-          <div className="mt-4 text-sm text-purple-100">Cosine similarity search</div>
-        </div>
+        <SimpleTooltip content="Total time including LLM generation">
+          <div className="bg-gradient-to-br from-green-500 to-green-600 rounded-xl p-6 text-white shadow-2xl hover:scale-105 transition-all duration-300 cursor-default">
+            <Clock className="w-12 h-12 mb-4 animate-pulse" />
+            <div className="text-6xl font-bold mb-2">1-2s</div>
+            <div className="text-green-100 text-lg">Query Response Time</div>
+            <div className="mt-4 text-sm text-green-100">Including LLM inference</div>
+          </div>
+        </SimpleTooltip>
+
+        <SimpleTooltip content="Time to ingest and process new files">
+          <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-6 text-white shadow-2xl hover:scale-105 transition-all duration-300 cursor-default">
+            <Cpu className="w-12 h-12 mb-4 animate-pulse" />
+            <div className="text-6xl font-bold mb-2">&lt;5s</div>
+            <div className="text-blue-100 text-lg">Document Processing</div>
+            <div className="mt-4 text-sm text-blue-100">Full pipeline end-to-end</div>
+          </div>
+        </SimpleTooltip>
+
+        <SimpleTooltip content="Time to find relevant context chunks">
+          <div className="bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl p-6 text-white shadow-2xl hover:scale-105 transition-all duration-300 cursor-default">
+            <Activity className="w-12 h-12 mb-4 animate-pulse" />
+            <div className="text-6xl font-bold mb-2">100ms</div>
+            <div className="text-purple-100 text-lg">Retrieval Speed</div>
+            <div className="mt-4 text-sm text-purple-100">Cosine similarity search</div>
+          </div>
+        </SimpleTooltip>
       </div>
 
       {/* Performance Visualization - Bar Chart */}
-      <div className="bg-white rounded-xl border-2 border-gray-200 p-6 shadow-xl">
+      <div 
+        id="tour-metrics"
+        className={`bg-white rounded-xl border-2 border-gray-200 p-6 shadow-xl ${getHighlightClass('tour-metrics', activeTourId)}`}
+      >
+        {activeTourId === 'tour-metrics' && <TourActiveLabel activeId="tour-metrics" />}
         <h3 className="text-2xl font-bold text-gray-900 mb-6 flex items-center gap-2">
           <BarChart3 className="w-7 h-7 text-blue-600" />
           Operation Performance (milliseconds)
@@ -654,28 +1079,29 @@ const MetricsTab = () => {
             { name: 'Quiz Generation', time: 4000, color: 'bg-pink-500', maxTime: 5000 },
             { name: 'Mind Map Creation', time: 2500, color: 'bg-teal-500', maxTime: 5000 }
           ].map((item, idx) => (
-            <div 
-              key={idx}
-              onMouseEnter={() => setHoveredBar(idx)}
-              onMouseLeave={() => setHoveredBar(null)}
-              className="relative"
-            >
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-sm font-semibold text-gray-700">{item.name}</span>
-                <span className="text-sm font-bold text-gray-900">{item.time}ms</span>
-              </div>
-              <div className="w-full bg-gray-200 rounded-full h-8 overflow-hidden">
-                <div 
-                  className={`${item.color} h-full rounded-full transition-all duration-1000 ease-out flex items-center justify-end px-3 text-white font-bold text-xs shadow-lg`}
-                  style={{ 
-                    width: hoveredBar === idx ? `${(item.time / item.maxTime) * 100}%` : '0%',
-                    transition: 'width 1s ease-out'
-                  }}
-                >
-                  {hoveredBar === idx && `${item.time}ms`}
+            <SimpleTooltip key={idx} content={`Execution time: ${item.time}ms`} className="w-full">
+              <div 
+                onMouseEnter={() => setHoveredBar(idx)}
+                onMouseLeave={() => setHoveredBar(null)}
+                className="relative w-full"
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm font-semibold text-gray-700">{item.name}</span>
+                  <span className="text-sm font-bold text-gray-900">{item.time}ms</span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-8 overflow-hidden">
+                  <div 
+                    className={`${item.color} h-full rounded-full transition-all duration-1000 ease-out flex items-center justify-end px-3 text-white font-bold text-xs shadow-lg`}
+                    style={{ 
+                      width: hoveredBar === idx ? `${(item.time / item.maxTime) * 100}%` : '0%',
+                      transition: 'width 1s ease-out'
+                    }}
+                  >
+                    {hoveredBar === idx && `${item.time}ms`}
+                  </div>
                 </div>
               </div>
-            </div>
+            </SimpleTooltip>
           ))}
         </div>
         <p className="text-sm text-gray-500 mt-4 italic">*Hover over bars to see animated performance metrics</p>
